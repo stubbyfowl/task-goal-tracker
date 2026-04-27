@@ -6,7 +6,41 @@ on:
   workflow_dispatch:
 
 jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          # Get the latest tag that looks like v1.x.y, default to v1.0.2
+          LATEST=$(git tag --list 'v1.*.*' --sort=-version:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v1.0.2"
+          fi
+          # Split and increment patch
+          MAJOR=$(echo $LATEST | cut -d. -f1 | tr -d 'v')
+          MINOR=$(echo $LATEST | cut -d. -f2)
+          PATCH=$(echo $LATEST | cut -d. -f3)
+          PATCH=$((PATCH + 1))
+          VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Next version: $VERSION"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+
   build-windows:
+    needs: release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,15 +54,17 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build .exe
-        run: python -m PyInstaller --onefile --windowed --name "TaskGoalTracker" app.py
+        run: python -m PyInstaller --onefile --windowed --name "TaskGoalTracker" --icon=app.icns app.py
 
-      - name: Upload .exe
-        uses: actions/upload-artifact@v4
+      - name: Upload .exe to Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: TaskGoalTracker-Windows
-          path: dist/TaskGoalTracker.exe
+          tag_name: ${{ needs.release.outputs.version }}
+          name: ${{ needs.release.outputs.version }}
+          files: dist/TaskGoalTracker.exe
 
   build-macos:
+    needs: release
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +78,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build .app
-        run: python -m PyInstaller --windowed --onefile --name "TaskGoalTracker" app.py
+        run: python3 -m PyInstaller --windowed --name "TaskGoalTracker" --icon=app.icns app.py
 
       - name: Create .dmg
         run: |
@@ -51,8 +87,9 @@ jobs:
             -ov -format UDZO \
             dist/TaskGoalTracker.dmg
 
-      - name: Upload .dmg
-        uses: actions/upload-artifact@v4
+      - name: Upload .dmg to Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: TaskGoalTracker-Mac
-          path: dist/TaskGoalTracker.dmg
+          tag_name: ${{ needs.release.outputs.version }}
+          name: ${{ needs.release.outputs.version }}
+          files: dist/TaskGoalTracker.dmg
