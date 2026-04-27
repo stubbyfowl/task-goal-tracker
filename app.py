@@ -19,12 +19,20 @@ def get_data_file() -> Path:
     return data_dir / "tracker_data.json"
 
 
+def today_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 @dataclass
 class TaskItem:
     text: str
     done: bool = False
     due_date: str = ""
     subtasks: List["TaskItem"] = field(default_factory=list)
+    # If True, this task recurs daily and resets each new day
+    recurring: bool = False
+    # The date this recurring task was last marked done (YYYY-MM-DD)
+    last_done_date: str = ""
 
 
 @dataclass
@@ -107,6 +115,8 @@ class DataStore:
             done=bool(item.get("done", False)),
             due_date=item.get("due_date", ""),
             subtasks=subtasks,
+            recurring=bool(item.get("recurring", False)),
+            last_done_date=item.get("last_done_date", ""),
         )
 
     def load(self) -> None:
@@ -159,10 +169,24 @@ class TrackerApp:
         self.goals: List[GoalItem] = self.store.data["goals"]
         self.dark_mode = tk.BooleanVar(value=False)
 
+        # Reset recurring tasks whose last_done_date is not today
+        self._reset_recurring_tasks()
+
         self._configure_style()
         self._build_ui()
         self.refresh_tasks()
         self.refresh_goals()
+
+    def _reset_recurring_tasks(self) -> None:
+        """Mark recurring tasks as not-done if they were completed on a previous day."""
+        today = today_str()
+        changed = False
+        for task in self.tasks:
+            if task.recurring and task.done and task.last_done_date != today:
+                task.done = False
+                changed = True
+        if changed:
+            self.store.save()
 
     def _configure_style(self) -> None:
         self.style = ttk.Style(self.root)
@@ -182,6 +206,7 @@ class TrackerApp:
             self.select_fg = "#ffffff"
             self.input_bg = "#121212"
             self.input_fg = "#f3f4f6"
+            self.recurring_fg = "#60a5fa"   # blue tint for recurring in dark
         else:
             self.bg = "#f4f6fa"
             self.card_bg = "#ffffff"
@@ -192,6 +217,7 @@ class TrackerApp:
             self.select_fg = "#111827"
             self.input_bg = "#ffffff"
             self.input_fg = "#111827"
+            self.recurring_fg = "#2563eb"   # blue tint for recurring in light
 
         self.root.configure(bg=self.bg)
         self.style.configure("TFrame", background=self.bg)
@@ -257,7 +283,7 @@ class TrackerApp:
 
         self.tasks_tab = ttk.Frame(tabs)
         self.goals_tab = ttk.Frame(tabs)
-        tabs.add(self.tasks_tab, text="Daily Tasks")
+        tabs.add(self.tasks_tab, text="Tasks")       # renamed from "Daily Tasks"
         tabs.add(self.goals_tab, text="Goals")
 
         self._build_tasks_tab()
@@ -275,11 +301,13 @@ class TrackerApp:
         self.task_text = tk.StringVar()
         ttk.Entry(first_row, textvariable=self.task_text).pack(side="left", fill="x", expand=True)
         ttk.Button(first_row, text="Add Task", command=lambda: self.safe(self.add_daily_task)).pack(side="left", padx=(8, 0))
+        ttk.Button(first_row, text="Add Daily", command=lambda: self.safe(self.add_recurring_task)).pack(side="left", padx=(6, 0))
 
         second_row = ttk.Frame(form)
         second_row.pack(fill="x", pady=(8, 0))
         self.task_due = DuePicker(second_row)
         self.task_due.frame.pack(side="left")
+        ttk.Label(second_row, text="  (Due date ignored for daily tasks)", style="Muted.TLabel").pack(side="left")
 
         actions = ttk.Frame(card)
         actions.pack(fill="x", padx=14, pady=(0, 8))
@@ -287,12 +315,23 @@ class TrackerApp:
         ttk.Button(actions, text="Delete", command=lambda: self.safe(self.delete_daily_task)).pack(side="left", padx=8)
         ttk.Button(actions, text="Delete Completed", command=lambda: self.safe(self.delete_daily_done)).pack(side="left", padx=8)
 
-        self.tasks_tree = ttk.Treeview(card, columns=("due",), show="tree headings", selectmode="browse")
+        self.tasks_tree = ttk.Treeview(card, columns=("type", "due"), show="tree headings", selectmode="browse")
         self.tasks_tree.heading("#0", text="Task")
+        self.tasks_tree.heading("type", text="Type")
         self.tasks_tree.heading("due", text="Due")
-        self.tasks_tree.column("#0", width=420, stretch=True)
+        self.tasks_tree.column("#0", width=380, stretch=True)
+        self.tasks_tree.column("type", width=80, minwidth=70, stretch=False, anchor="center")
         self.tasks_tree.column("due", width=130, minwidth=110, stretch=False, anchor="center")
+
+        # Tag for recurring/daily tasks — blue foreground
+        self.tasks_tree.tag_configure("recurring", foreground="#2563eb")
+
         self.tasks_tree.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+
+        # Legend
+        legend = ttk.Frame(card)
+        legend.pack(fill="x", padx=14, pady=(0, 8))
+        ttk.Label(legend, text="● Blue = Daily task (resets each day)  ● Normal = One-time task", style="Muted.TLabel").pack(side="left")
 
     def _build_goals_tab(self) -> None:
         outer = ttk.Panedwindow(self.goals_tab, orient="horizontal")
@@ -365,7 +404,8 @@ class TrackerApp:
             messagebox.showerror("Unexpected Error", str(exc))
 
     def format_task_label(self, task: TaskItem) -> str:
-        return f"[{'x' if task.done else ' '}] {task.text}"
+        prefix = "↻ " if task.recurring else ""
+        return f"{prefix}[{'x' if task.done else ' '}] {task.text}"
 
     def selected_goal_index(self) -> Optional[int]:
         sel = self.goals_list.curselection()
@@ -396,7 +436,15 @@ class TrackerApp:
         for iid in self.tasks_tree.get_children():
             self.tasks_tree.delete(iid)
         for idx, task in enumerate(self.tasks):
-            self.tasks_tree.insert("", "end", iid=f"d-{idx}", text=self.format_task_label(task), values=(task.due_date,))
+            type_label = "Daily" if task.recurring else "One-time"
+            tags = ("recurring",) if task.recurring else ()
+            self.tasks_tree.insert(
+                "", "end",
+                iid=f"d-{idx}",
+                text=self.format_task_label(task),
+                values=(type_label, task.due_date),
+                tags=tags,
+            )
 
     def refresh_goals(self) -> None:
         selected = self.selected_goal_index()
@@ -439,11 +487,23 @@ class TrackerApp:
             self.parent_task.set(dropdown_options[0])
 
     def add_daily_task(self) -> None:
+        """Add a regular one-time task."""
         text = self.task_text.get().strip()
         if not text:
             return
         due = self.task_due.get_value()
-        self.tasks.append(TaskItem(text=text, due_date=due))
+        self.tasks.append(TaskItem(text=text, due_date=due, recurring=False))
+        self.task_text.set("")
+        self.task_due.clear()
+        self.store.save()
+        self.refresh_tasks()
+
+    def add_recurring_task(self) -> None:
+        """Add a daily recurring task (ignores due date picker)."""
+        text = self.task_text.get().strip()
+        if not text:
+            return
+        self.tasks.append(TaskItem(text=text, due_date="", recurring=True))
         self.task_text.set("")
         self.task_due.clear()
         self.store.save()
@@ -453,7 +513,11 @@ class TrackerApp:
         idx = self.selected_daily_index()
         if idx is None:
             return
-        self.tasks[idx].done = not self.tasks[idx].done
+        task = self.tasks[idx]
+        task.done = not task.done
+        # For recurring tasks, record the date it was completed
+        if task.recurring:
+            task.last_done_date = today_str() if task.done else ""
         self.store.save()
         self.refresh_tasks()
 
@@ -466,7 +530,8 @@ class TrackerApp:
         self.refresh_tasks()
 
     def delete_daily_done(self) -> None:
-        self.tasks = [task for task in self.tasks if not task.done]
+        # Only delete completed one-time tasks; leave recurring tasks alone
+        self.tasks = [task for task in self.tasks if not (task.done and not task.recurring)]
         self.store.data["tasks"] = self.tasks
         self.store.save()
         self.refresh_tasks()
