@@ -1,0 +1,54 @@
+name: Build TaskGoalTracker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build .exe
+        run: python -m PyInstaller --onefile --windowed --name "TaskGoalTracker" app.py
+
+      - name: Upload .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskGoalTracker-Windows
+          path: dist/TaskGoalTracker.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build .app
+        run: python -m PyInstaller --windowed --onefile --name "TaskGoalTracker" app.py
+
+      - name: Zip .app
+        run: zip -r dist/TaskGoalTracker-Mac.zip dist/TaskGoalTracker.app
+
+      - name: Upload .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskGoalTracker-Mac
+          path: dist/TaskGoalTracker-Mac.zip
