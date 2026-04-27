@@ -18,12 +18,10 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          # Get the latest tag that looks like v1.x.y, default to v1.0.2
           LATEST=$(git tag --list 'v1.*.*' --sort=-version:refname | head -n1)
           if [ -z "$LATEST" ]; then
             LATEST="v1.0.2"
           fi
-          # Split and increment patch
           MAJOR=$(echo $LATEST | cut -d. -f1 | tr -d 'v')
           MINOR=$(echo $LATEST | cut -d. -f2)
           PATCH=$(echo $LATEST | cut -d. -f3)
@@ -50,11 +48,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PyInstaller
-        run: pip install pyinstaller
+      - name: Install PyInstaller and Pillow
+        run: pip install pyinstaller pillow
+
+      - name: Convert .icns to .ico
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('app.icns')
+          img.save('app.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+          "
 
       - name: Build .exe
-        run: python -m PyInstaller --onefile --windowed --name "TaskGoalTracker" --icon=app.icns app.py
+        run: python -m PyInstaller --onefile --windowed --name "TaskGoalTracker" --icon=app.ico app.py
 
       - name: Upload .exe to Release
         uses: softprops/action-gh-release@v2
