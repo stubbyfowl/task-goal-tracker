@@ -44,11 +44,15 @@ jobs:
       - name: Build .app
         run: python -m PyInstaller --windowed --onefile --name "TaskGoalTracker" app.py
 
-      - name: Zip .app
-        run: zip -r dist/TaskGoalTracker-Mac.zip dist/TaskGoalTracker.app
+      - name: Create .dmg
+        run: |
+          hdiutil create -volname "TaskGoalTracker" \
+            -srcfolder dist/TaskGoalTracker.app \
+            -ov -format UDZO \
+            dist/TaskGoalTracker.dmg
 
-      - name: Upload .app
+      - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
           name: TaskGoalTracker-Mac
-          path: dist/TaskGoalTracker-Mac.zip
+          path: dist/TaskGoalTracker.dmg
