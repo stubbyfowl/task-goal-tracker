@@ -86,10 +86,13 @@ jobs:
       - name: Build .app
         run: python3 -m PyInstaller --windowed --name "TaskGoalTracker" --icon=app.icns app.py
 
-      - name: Create .dmg
+      - name: Create .dmg with Applications shortcut
         run: |
+          mkdir -p dmg_staging
+          cp -r dist/TaskGoalTracker.app dmg_staging/
+          ln -s /Applications dmg_staging/Applications
           hdiutil create -volname "TaskGoalTracker" \
-            -srcfolder dist/TaskGoalTracker.app \
+            -srcfolder dmg_staging \
             -ov -format UDZO \
             dist/TaskGoalTracker.dmg
 
